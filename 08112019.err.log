@@ -1,0 +1,2 @@
+
+ [14:4] [397] Error [ERR_STREAM_DESTROYED]: Cannot call write after a stream was destroyed

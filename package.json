@@ -1,0 +1,30 @@
+{
+  "name": "node-zklib",
+  "version": "1.0.0",
+  "description": "light weight module for connect to biometrix device",
+  "main": "zklib.js",
+  "scripts": {
+    "test": "node test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/caobo171/node-zklib.git"
+  },
+  "keywords": [
+    "zkteco",
+    "zklib",
+    "node-zklib",
+    "attendance-device",
+    "attendance",
+    "biometrix-device"
+  ],
+  "author": "caobo171",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/caobo171/node-zklib/issues"
+  },
+  "homepage": "https://github.com/caobo171/node-zklib#readme",
+  "dependencies": {
+    "node-zklib": "^1.0.0"
+  }
+}

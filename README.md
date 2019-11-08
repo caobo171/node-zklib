@@ -1,5 +1,12 @@
 # node-zklib
 
+- install 
+
+```
+ npm install --save node-zklib
+or yarn add node-zklib
+```
+
 ```javascript
 
 const ZKLib = require('./zklib.js')
@@ -32,7 +39,7 @@ const test = async () => {
         console.log(data)
     })
 
-    
+
     console.log('check attendances',attendances )
 
     console.log('check users', users)

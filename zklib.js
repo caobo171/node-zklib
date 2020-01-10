@@ -1,7 +1,7 @@
 const ZKLibTCP = require('./zklibtcp')
 const ZKLibUDP = require('./zklibudp')
 
-const { log } = require('./helpers/errorLog')
+const { ZKError , ERROR_TYPES } = require('./zkerror')
 
 class ZKLib {
     constructor(ip, port, timeout , inport){
@@ -12,25 +12,87 @@ class ZKLib {
         this.interval = null 
         this.timer = null
         this.isBusy = false
+        this.ip = ip
+    }
+
+    async functionWrapper (tcpCallback, udpCallback , command ){
+        switch(this.connectionType){
+            case 'tcp':
+                if(this.zklibTcp.socket){
+                    try{
+                        const res =  await tcpCallback()
+                        return res
+                    }catch(err){
+                        return Promise.reject(new ZKError(
+                            err,
+                            `[TCP] ${command}`,
+                            this.ip
+                        ))
+                    }
+                       
+                }else{
+                    return Promise.reject(new ZKError(
+                        new Error( `Socket isn't connected !`),
+                        `[TCP]`,
+                        this.ip
+                    ))
+                }
+            case 'udp':
+                if(this.zklibUdp.socket){
+                    try{
+                        const res =  await udpCallback()
+                        return res
+                    }catch(err){
+                        return Promise.reject(new ZKError(
+                            err,
+                            `[UDP] ${command}`,
+                            this.ip
+                        ))
+                    }    
+                }else{
+                    return Promise.reject(new ZKError(
+                        new Error( `Socket isn't connected !`),
+                        `[UDP]`,
+                        this.ip
+                    ))
+                }
+            default:
+                return Promise.reject(new ZKError(
+                    new Error( `Socket isn't connected !`),
+                    '',
+                    this.ip
+                ))
+        }
     }
 
     async createSocket(cbErr, cbClose){
-        if(!this.connectionType){
-
-        }
         try{
             if(!this.zklibTcp.socket){
+                try{
+                    await this.zklibTcp.createSocket(cbErr,cbClose)
+                   
 
-                await this.zklibTcp.createSocket(cbErr,cbClose)
-                await this.zklibTcp.connect()
+                }catch(err){
+                    throw err;
+                }
+              
+                try{
+                    await this.zklibTcp.connect();
+                    console.log('ok tcp')
+                }catch(err){
+                    throw err;
+                }
             }      
+
             this.connectionType = 'tcp'
+
         }catch(err){
-            console.log('check err', err)
             try{
                 await this.zklibTcp.disconnect()
-            }catch(err){
-                log(`[32] ${err.toString()}`)
+            }catch(err){}
+
+            if(err.code !== ERROR_TYPES.ECONNREFUSED){
+                return Promise.reject(new ZKError(err, 'TCP CONNECT' , this.ip))
             }
 
             try {
@@ -39,8 +101,11 @@ class ZKLib {
                     await this.zklibUdp.connect()
                 }   
                 
+                console.log('ok udp')
                 this.connectionType = 'udp'
             }catch(err){
+
+
 
                 if(err.code !== 'EADDRINUSE'){
                     this.connectionType = null
@@ -48,11 +113,13 @@ class ZKLib {
                         await this.zklibUdp.disconnect()
                         this.zklibUdp.socket = null
                         this.zklibTcp.socket = null
-                    }catch(err){
-                        log(`[47] ${err.toString()}`)
-                    }
+                    }catch(err){}
+
+
+                    return Promise.reject(new ZKError(err, 'UDP CONNECT' , this.ip))
                 }else{
                     this.connectionType = 'udp'
+                    
                 }
                 
             }
@@ -60,163 +127,77 @@ class ZKLib {
     }
 
     async getUsers(){
-        switch(this.connectionType){
-            case 'tcp':
-                if(this.zklibTcp.socket){
-                    return await this.zklibTcp.getUsers()
-                }else{
-                    return {data: [] , err: `Socket isn't connected !`}
-                }
-            case 'udp':
-                if(this.zklibUdp.socket){
-                    return await this.zklibUdp.getUsers()
-                }else{
-                    return {data: [] , err: `Socket isn't connected !`}
-                }
-            default:
-                return {data: [] , err: `Socket isn't connected !`}
-        }
+        return await this.functionWrapper(
+            ()=> this.zklibTcp.getUsers(),
+            ()=> this.zklibUdp.getUsers()
+        )
     }
 
-    async getAttendances(ip, cb){
-        switch(this.connectionType){
-            case 'tcp':
-                if(this.zklibTcp.socket){
-                    return await this.zklibTcp.getAttendances(ip,cb)
-                }else{
-                    return {data: [] , err: `Socket isn't connected !`}
-                }
-            case 'udp':
-                if(this.zklibUdp.socket){
-                    return await this.zklibUdp.getAttendances(ip,cb)
-                }else{
-                    return {data: [] , err: `Socket isn't connected !`}
-                }
-            default : 
-                return {data: [], err: `Socket isn't connected !`}
-        }
+    async getAttendances(cb){
+        return await this.functionWrapper(
+            ()=> this.zklibTcp.getAttendances(cb),
+            ()=> this.zklibUdp.getAttendances(cb),
+        )
     }
 
     async getRealTimeLogs(cb){
-        switch(this.connectionType){
-            case 'tcp':
-                if(this.zklibTcp.socket){
-                    return await this.zklibTcp.getRealTimeLogs(cb)
-                }else{
-                    return { err: `Socket isn't connected !`}
-                }
-                
-            case 'udp':
-                if(this.zklibUdp.socket){
-                    return await this.zklibUdp.getRealTimeLogs(cb)
-                }else{
-                    return { err: `Socket isn't connected !`}
-                }
-            default:
-                return 
-        }
+        return await this.functionWrapper(
+            ()=> this.zklibTcp.getRealTimeLogs(cb),
+            ()=> this.zklibUdp.getRealTimeLogs(cb)
+        )
     }
 
     async disconnect(){
-        switch(this.connectionType){
-            case 'tcp':
-                return await this.zklibTcp.disconnect()
-            case 'udp':
-                return await this.zklibUdp.disconnect()
-            default:
-                return
-        }
+        return await this.functionWrapper(
+            ()=> this.zklibTcp.disconnect(),
+            ()=> this.zklibUdp.disconnect()
+        )
     }
 
     async freeData(){
-        switch(this.connectionType){
-            case 'tcp':
-                return await this.zklibTcp.freeData()
-            case 'udp':
-                return await this.zklibUdp.freeData()
-            default:
-                return
-        }
+        return await this. functionWrapper(
+            ()=> this.zklibTcp.freeData(),
+            ()=> this.zklibUdp.freeData()
+        )
     }
 
 
     async disableDevice(){
-        switch(this.connectionType){
-            case 'tcp':
-                if(this.zklibTcp.socket){
-                    return await this.zklibTcp.disableDevice()
-                }else{
-                    return { err: `Socket isn't connected !`}
-                }
-            case 'udp':
-                if(this.zklibUdp.socket){
-                    return await this.zklibUdp.disableDevice()
-                }else{
-                    return { err: `Socket isn't connected !`}
-                }
-            default:
-                return
-        }
+        return await this. functionWrapper(
+            ()=>this.zklibTcp.disableDevice(),
+            ()=>this.zklibUdp.disableDevice()
+        )
     }
 
 
     async enableDevice(){
-        switch(this.connectionType){
-            case 'tcp':
-                if(this.zklibTcp.socket){
-                    return await this.zklibTcp.enableDevice()
-                }else{
-                    return { err: `Socket isn't connected !`}
-                }  
-            case 'udp':
-                if(this.zklibUdp.socket){
-                    return await this.zklibUdp.enableDevice()
-                }else{
-                    return { err: `Socket isn't connected !`}
-                }
-            default:
-                return
-        }
+        return await this.functionWrapper(
+            ()=>this.zklibTcp.enableDevice(),
+            ()=> this.zklibUdp.enableDevice()
+        )
     }
 
 
     async getInfo(){
-        switch(this.connectionType){
-            case 'tcp':
-                if(this.zklibTcp.socket){
-                    return await this.zklibTcp.getInfo()
-                }else{
-                    return { err: `Socket isn't connected !`}
-                }  
-            case 'udp':
-                if(this.zklibUdp.socket){
-                    return await this.zklibUdp.getInfo()
-                }else{
-                    return { err: `Socket isn't connected !`}
-                }
-            default:
-                return
-        }
+        return await this.functionWrapper(
+            ()=> this.zklibTcp.getInfo(),
+            ()=>this.zklibUdp.getInfo()
+        )
     }
 
 
     async getSocketStatus(){
-        switch(this.connectionType){
-            case 'tcp':
-                if(this.zklibTcp.socket){
-                    return await this.zklibTcp.getSocketStatus()
-                }else{
-                    return { err: `Socket isn't connected !`}
-                }  
-            case 'udp':
-                if(this.zklibUdp.socket){
-                    return await this.zklibUdp.getSocketStatus()
-                }else{
-                    return { err: `Socket isn't connected !`}
-                }
-            default:
-                return
-        }
+        return await this.functionWrapper(
+            ()=>this.zklibTcp.getSocketStatus(),
+            ()=> this.zklibUdp.getSocketStatus()
+        )
+    }
+
+    async clearAttendanceLog(){
+        return await this.functionWrapper(
+            ()=> this.zklibTcp.clearAttendanceLog(),
+            ()=> this.zklibUdp.clearAttendanceLog()
+        )
     }
 
     setIntervalSchedule(cb , timer){

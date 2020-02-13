@@ -73,7 +73,7 @@ test()
 
 - There are many function you can do just visit zk protocol to see the command and put it in executeCmd function already exist in the ZKLIB 
 
-- [This repo contain the cmd of many machine ]: https://github.com/adrobinoga/zk-protocol/blob/master/protocol.md
+- [This repo contain the cmd of many machine ] (https://github.com/adrobinoga/zk-protocol/blob/master/protocol.md)
 
 ```javascript
     async executeCmd(command, data=''){

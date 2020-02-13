@@ -200,6 +200,13 @@ class ZKLib {
         )
     }
 
+    async executeCmd(command, data=''){
+        return await this.functionWrapper(
+            ()=> this.zklibTcp.executeCmd(command, data),
+            ()=> this.zklibUdp.executeCmd(command , data)
+        )
+    }
+
     setIntervalSchedule(cb , timer){
         this.interval = setInterval(cb, timer)
     }

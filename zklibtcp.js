@@ -109,7 +109,7 @@ class ZKLibTCP {
   requestData(msg) {
     return new Promise((resolve, reject) => {
       let timer = null
-
+      let replyBuffer = Buffer.from([])
       const internalCallback = (data) => {
         this.socket.removeListener('data', handleOnData)
         timer && clearTimeout(timer)
@@ -117,22 +117,29 @@ class ZKLibTCP {
       }
 
       const handleOnData = (data) => {
-        if (checkNotEventTCP(data)) return;
-        clearTimeout(timer)
-        timer = setTimeout(() => {
-          reject(new Error('TIMEOUT_ON_RECEIVING_REQUEST_DATA'))
-        }, this.timeout)
-
-        const packetLength = data.readUIntLE(4, 2)
-        if (packetLength > 8) {
-          internalCallback(data)
-        }
-
         replyBuffer = Buffer.concat([replyBuffer, data])
+        if (checkNotEventTCP(data)) return;
+        clearTimeout(timer)   
+        const header = decodeTCPHeader(replyBuffer.subarray(0,16));
+
+        if(header.commandId === COMMANDS.CMD_DATA){
+          timer = setTimeout(()=>{
+            internalCallback(replyBuffer)
+          }, 1000)
+        }else{
+          timer = setTimeout(() => {
+            reject(new Error('TIMEOUT_ON_RECEIVING_REQUEST_DATA'))
+          }, this.timeout)
+
+          const packetLength = data.readUIntLE(4, 2)
+          if (packetLength > 8) {
+            internalCallback(data)
+          }
+        }
       }
 
 
-      let replyBuffer = Buffer.from([])
+      
       this.socket.on('data', handleOnData)
 
       this.socket.write(msg, null, err => {
@@ -266,8 +273,6 @@ class ZKLibTCP {
 
           const handleOnData = (reply) => {
 
-            console.log('check resply', reply)
-
             if (checkNotEventTCP(reply)) return;
             clearTimeout(timer)
             timer = setTimeout(() => {
@@ -323,6 +328,10 @@ class ZKLibTCP {
   }
 
 
+  async getSmallAttendanceLogs(){
+
+  }
+
   /**
    *  reject error when starting request data
    *  return { data: users, err: Error } when receiving requested data
@@ -340,7 +349,7 @@ class ZKLibTCP {
     let data = null
     try {
       data = await this.readWithBuffer(REQUEST_DATA.GET_USERS)
-      console.log(data.data.length , data.data)
+ 
     } catch (err) {
       return Promise.reject(err)
     }
@@ -368,7 +377,7 @@ class ZKLibTCP {
 
       
     }
-    console.log(userData.length)
+    
     return { data: users, err: data.err }
   }
 

@@ -13,7 +13,6 @@ const parseCurrentTime = ()=>{
 
 
 module.exports.log = (text)=>{
-    console.log('check text', text)
     const currentTime = parseCurrentTime()
     fs.appendFile(`${currentTime.day}`.padStart(2,'0')+ `${currentTime.month}`.padStart(2,'0')+`${currentTime.year}.err.log`
     ,`\n [${currentTime.hour}:${currentTime.second}] ${text}`,()=>{});

@@ -25,7 +25,6 @@ const test = async () => {
     } catch (e) {
         console.log(e)
         if (e.code === 'EADDRINUSE') {
-            console.log('eeee', e)
         }
     }
 

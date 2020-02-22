@@ -1,4 +1,6 @@
-const dgram = require('dgram')
+const dgram = require('dgram');
+const timeParser = require('./timeParser');
+
 const {
   createUDPHeader,
   decodeUserData28,
@@ -417,6 +419,10 @@ class ZKLibUDP {
     return await this.executeCmd(COMMANDS.CMD_FREE_DATA, '')
   }
 
+  async getTime() {
+		const time = await this.executeCmd(COMMANDS.CMD_GET_TIME, '');
+		return timeParser.decode(time.readUInt32LE(8));
+	}
 
   async getInfo() {
     const data = await this.executeCmd(COMMANDS.CMD_GET_FREE_SIZES, '')

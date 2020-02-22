@@ -1,4 +1,6 @@
 const net = require('net')
+const timeParser = require('./timeParser');
+
 const { MAX_CHUNK, COMMANDS, REQUEST_DATA } = require('./constants')
 const { createTCPHeader,
   exportErrorMessage,
@@ -430,6 +432,11 @@ class ZKLibTCP {
 
   }
 
+  async getTime() {
+		const time = await this.executeCmd(COMMANDS.CMD_GET_TIME, '');
+		return timeParser.decode(time.readUInt32LE(8));
+	}
+  
   async freeData() {
     return await this.executeCmd(COMMANDS.CMD_FREE_DATA, '')
   }

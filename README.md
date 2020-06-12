@@ -58,7 +58,10 @@ const test = async () => {
     // delete the data in machine
     // You should do this when there are too many data in the machine, this issue can slow down machine 
     zkInstance.clearAttendanceLog();
-
+    
+    // Get the device time
+    const getTime = await zkInstance.getTime();
+		  console.log(getTime.toString());
 
     // Disconnect the machine ( don't do this when you need realtime update :))) 
     await zkInstance.disconnect()

@@ -160,7 +160,13 @@ class ZKLib {
             ()=> this.zklibUdp.freeData()
         )
     }
-
+    
+	async getTime() {
+		return await this.functionWrapper(
+			() => this.zklibTcp.getTime(),
+			() => this.zklibUdp.getTime()
+		);
+	}
 
     async disableDevice(){
         return await this. functionWrapper(

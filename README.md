@@ -1,10 +1,10 @@
 # node-zklib
 
-- install 
+## install 
 
 ```
  npm install --save node-zklib
-or yarn add node-zklib
+ or yarn add node-zklib
 ```
 
 ```javascript

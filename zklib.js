@@ -4,11 +4,12 @@ const ZKLibUDP = require('./zklibudp')
 const { ZKError , ERROR_TYPES } = require('./zkerror')
 
 class ZKLib {
-    constructor(ip, port, timeout , inport){
+    constructor(ip, port, timeout, inport, protocol = 'auto') {
         this.connectionType = null
+        this.preferredProtocol = protocol.toLowerCase()
 
         this.zklibTcp = new ZKLibTCP(ip,port,timeout) 
-        this.zklibUdp = new ZKLibUDP(ip,port,timeout , inport) 
+        this.zklibUdp = new ZKLibUDP(ip,port,timeout,inport) 
         this.interval = null 
         this.timer = null
         this.isBusy = false
@@ -65,66 +66,46 @@ class ZKLib {
         }
     }
 
-    async createSocket(cbErr, cbClose){
-        try{
-            if(!this.zklibTcp.socket){
-                try{
-                    await this.zklibTcp.createSocket(cbErr,cbClose)
-                   
+    setProtocol(protocol) {
+        if (['tcp', 'udp', 'auto'].includes(protocol.toLowerCase())) {
+            this.preferredProtocol = protocol.toLowerCase()
+            return true
+        }
+        return false
+    }
 
-                }catch(err){
-                    throw err;
-                }
-              
-                try{
-                    await this.zklibTcp.connect();
-                    console.log('ok tcp')
-                }catch(err){
-                    throw err;
-                }
-            }      
-
-            this.connectionType = 'tcp'
-
-        }catch(err){
-            try{
-                await this.zklibTcp.disconnect()
-            }catch(err){}
-
-            if(err.code !== ERROR_TYPES.ECONNREFUSED){
-                return Promise.reject(new ZKError(err, 'TCP CONNECT' , this.ip))
-            }
-
+    async createSocket(cbErr, cbClose) {
+        if (this.preferredProtocol === 'tcp' || this.preferredProtocol === 'auto') {
             try {
-                if(!this.zklibUdp.socket){
+                if (!this.zklibTcp.socket) {
+                    await this.zklibTcp.createSocket(cbErr, cbClose)
+                    await this.zklibTcp.connect()
+                }
+                this.connectionType = 'tcp'
+                console.log('Connected via TCP')
+                return
+            } catch (err) {
+                if (this.preferredProtocol === 'tcp') {
+                    throw new ZKError(err, 'TCP CONNECT', this.ip)
+                }
+                // If auto, continue to try UDP
+            }
+        }
+
+        if (this.preferredProtocol === 'udp' || this.preferredProtocol === 'auto') {
+            try {
+                if (!this.zklibUdp.socket) {
                     await this.zklibUdp.createSocket(cbErr, cbClose)
                     await this.zklibUdp.connect()
-                }   
-                
-                console.log('ok udp')
-                this.connectionType = 'udp'
-            }catch(err){
-
-
-
-                if(err.code !== 'EADDRINUSE'){
-                    this.connectionType = null
-                    try{
-                        await this.zklibUdp.disconnect()
-                        this.zklibUdp.socket = null
-                        this.zklibTcp.socket = null
-                    }catch(err){}
-
-
-                    return Promise.reject(new ZKError(err, 'UDP CONNECT' , this.ip))
-                }else{
-                    this.connectionType = 'udp'
-                    
                 }
-                
+                this.connectionType = 'udp'
+                console.log('Connected via UDP')
+            } catch (err) {
+                throw new ZKError(err, 'UDP CONNECT', this.ip)
             }
         }
     }
+
 
     async getUsers(){
         return await this.functionWrapper(

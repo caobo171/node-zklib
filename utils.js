@@ -145,6 +145,8 @@ module.exports.decodeUserData72 = (userData)=>{
 
 module.exports.decodeRecordData40 = (recordData)=>{
     const record = {
+        raw: recordData,
+        direction: recordData.readUIntLE(26, 1),
         userSn: recordData.readUIntLE(0, 2),
         deviceUserId: recordData
         .slice(2, 2+9)

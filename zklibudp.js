@@ -16,7 +16,7 @@ const { MAX_CHUNK, REQUEST_DATA, COMMANDS } = require('./constants')
 const { log } = require('./helpers/errorLog')
 
 class ZKLibUDP {
-  constructor(ip, port, timeout, inport) {
+  constructor(ip, port, timeout, inport, comm_key) {
     this.ip = ip
     this.port = port
     this.timeout = timeout
@@ -24,6 +24,7 @@ class ZKLibUDP {
     this.sessionId = null
     this.replyId = 0
     this.inport = inport
+    this.comm_key = comm_key
   }
 
   createSocket(cbError, cbClose) {

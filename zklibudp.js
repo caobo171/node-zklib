@@ -16,7 +16,7 @@ const { MAX_CHUNK, REQUEST_DATA, COMMANDS } = require('./constants')
 const { log } = require('./helpers/errorLog')
 
 class ZKLibUDP {
-  constructor(ip, port, timeout, inport) {
+  constructor(ip, port, timeout, inport, comm_key) {
     this.ip = ip
     this.port = port
     this.timeout = timeout
@@ -24,6 +24,7 @@ class ZKLibUDP {
     this.sessionId = null
     this.replyId = 0
     this.inport = inport
+    this.comm_key = comm_key
   }
 
   createSocket(cbError, cbClose) {
@@ -145,13 +146,13 @@ class ZKLibUDP {
   }
 
   /**
-  * 
-  * @param {*} command 
-  * @param {*} data 
-  * 
-  * 
-  * reject error when command fail and resolve data when success
-  */
+   *
+   * @param {*} command
+   * @param {*} data
+   *
+   *
+   * reject error when command fail and resolve data when success
+   */
   executeCmd(command, data) {
     return new Promise(async (resolve, reject) => {
       try {
@@ -198,11 +199,11 @@ class ZKLibUDP {
 
 
   /**
-   * 
+   *
    * @param {*} reqData - indicate the type of data that need to receive ( user or attLog)
    * @param {*} cb - callback is triggered when receiving packets
-   * 
-   * readWithBuffer will reject error if it'wrong when starting request data 
+   *
+   * readWithBuffer will reject error if it'wrong when starting request data
    * readWithBuffer will return { data: replyData , err: Error } when receiving requested data
    */
   readWithBuffer(reqData, cb = null) {
@@ -262,7 +263,7 @@ class ZKLibUDP {
             clearTimeout(timer)
             timer = setTimeout(() => {
               internalCallback(totalBuffer,
-                new Error(`TIMEOUT !! ${(size - totalBuffer.length) / size} % REMAIN !  `))
+                  new Error(`TIMEOUT !! ${(size - totalBuffer.length) / size} % REMAIN !  `))
             }, timeout)
             const header = decodeUDPHeader(reply)
 
@@ -351,9 +352,9 @@ class ZKLibUDP {
 
 
   /**
-   * 
-   * @param {*} ip 
-   * @param {*} callbackInProcess  
+   *
+   * @param {*} ip
+   * @param {*} callbackInProcess
    *  reject error when starting request data
    *  return { data: records, err: Error } when receiving requested data
    */
@@ -374,7 +375,7 @@ class ZKLibUDP {
     }catch(err){
       return Promise.reject(err)
     }
-    
+
     if (this.socket) {
       try {
         await this.freeData()
@@ -420,9 +421,9 @@ class ZKLibUDP {
   }
 
   async getTime() {
-		const time = await this.executeCmd(COMMANDS.CMD_GET_TIME, '');
-		return timeParser.decode(time.readUInt32LE(8));
-	}
+    const time = await this.executeCmd(COMMANDS.CMD_GET_TIME, '');
+    return timeParser.decode(time.readUInt32LE(8));
+  }
 
   async getInfo() {
     const data = await this.executeCmd(COMMANDS.CMD_GET_FREE_SIZES, '')

@@ -4,15 +4,16 @@ const ZKLibUDP = require('./zklibudp')
 const { ZKError , ERROR_TYPES } = require('./zkerror')
 
 class ZKLib {
-    constructor(ip, port, timeout , inport){
-        this.connectionType = null
+    constructor(ip, port, timeout , inport, comm_code = 0, protocol){
+        this.connectionType = protocol
 
-        this.zklibTcp = new ZKLibTCP(ip,port,timeout) 
-        this.zklibUdp = new ZKLibUDP(ip,port,timeout , inport) 
-        this.interval = null 
+        this.zklibTcp = new ZKLibTCP(ip,port,timeout, comm_code)
+        this.zklibUdp = new ZKLibUDP(ip,port,timeout , inport, comm_code)
+        this.interval = null
         this.timer = null
         this.isBusy = false
         this.ip = ip
+        this.comm_code = comm_code || undefined
     }
 
     async functionWrapper (tcpCallback, udpCallback , command ){
@@ -29,7 +30,6 @@ class ZKLib {
                             this.ip
                         ))
                     }
-                       
                 }else{
                     return Promise.reject(new ZKError(
                         new Error( `Socket isn't connected !`),
@@ -48,7 +48,7 @@ class ZKLib {
                             `[UDP] ${command}`,
                             this.ip
                         ))
-                    }    
+                    }
                 }else{
                     return Promise.reject(new ZKError(
                         new Error( `Socket isn't connected !`),
@@ -70,19 +70,20 @@ class ZKLib {
             if(!this.zklibTcp.socket){
                 try{
                     await this.zklibTcp.createSocket(cbErr,cbClose)
-                   
+
 
                 }catch(err){
                     throw err;
                 }
-              
+
                 try{
                     await this.zklibTcp.connect();
+                    this.zklibTcp.is_connect = true
                     console.log('ok tcp')
                 }catch(err){
                     throw err;
                 }
-            }      
+            }
 
             this.connectionType = 'tcp'
 
@@ -99,8 +100,8 @@ class ZKLib {
                 if(!this.zklibUdp.socket){
                     await this.zklibUdp.createSocket(cbErr, cbClose)
                     await this.zklibUdp.connect()
-                }   
-                
+                }
+
                 console.log('ok udp')
                 this.connectionType = 'udp'
             }catch(err){
@@ -119,9 +120,9 @@ class ZKLib {
                     return Promise.reject(new ZKError(err, 'UDP CONNECT' , this.ip))
                 }else{
                     this.connectionType = 'udp'
-                    
+
                 }
-                
+
             }
         }
     }
@@ -160,13 +161,13 @@ class ZKLib {
             ()=> this.zklibUdp.freeData()
         )
     }
-    
-	async getTime() {
-		return await this.functionWrapper(
-			() => this.zklibTcp.getTime(),
-			() => this.zklibUdp.getTime()
-		);
-	}
+
+    async getTime() {
+        return await this.functionWrapper(
+            () => this.zklibTcp.getTime(),
+            () => this.zklibUdp.getTime()
+        );
+    }
 
     async disableDevice(){
         return await this. functionWrapper(
@@ -222,7 +223,7 @@ class ZKLib {
         this.timer = setTimeout(cb,timer)
     }
 
-    
+
 
 }
 

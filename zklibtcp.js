@@ -9,18 +9,24 @@ const { createTCPHeader,
   decodeRecordData40,
   decodeRecordRealTimeLog52,
   checkNotEventTCP,
-  decodeTCPHeader } = require('./utils')
+  decodeTCPHeader,
+  makeCommKey} = require('./utils')
 
-const { log } = require('./helpers/errorLog')
+const { log } = require('./helpers/errorLog');
+const { ZKError } = require('./zkerror');
 
 class ZKLibTCP {
-  constructor(ip, port, timeout) {
+  is_connect = false;
+
+  constructor(ip, port = 4370, timeout = 10000, comm_code = undefined, encoding = 'UTF-8') {
     this.ip = ip
     this.port = port
     this.timeout = timeout
     this.sessionId = null
     this.replyId = 0
     this.socket = null
+    this.comm_code = comm_code
+    this.encoding = encoding
   }
 
 
@@ -55,9 +61,20 @@ class ZKLibTCP {
   connect() {
     return new Promise(async (resolve, reject) => {
       try {
-        const reply = await this.executeCmd(COMMANDS.CMD_CONNECT, '')
-        if (reply) {
+        let reply = await this.executeCmd(COMMANDS.CMD_CONNECT, '')
+        console.log(reply.readUInt16LE(0))
+        if (reply.readUInt16LE(0) === COMMANDS.CMD_ACK_OK) {
           resolve(true)
+        }
+        if (reply.readUInt16LE(0) === COMMANDS.CMD_ACK_UNAUTH) {
+          const hashedCommkey = makeCommKey(this.comm_code, this.sessionId)
+          reply = await this.executeCmd(COMMANDS.CMD_AUTH, hashedCommkey)
+
+          if (reply.readUInt16LE(0) === COMMANDS.CMD_ACK_OK) {
+            resolve(true)
+          } else {
+            reject(new Error("error de authenticacion", responseCMD))
+          }
         } else {
 
           reject(new Error('NO_REPLY_ON_CMD_CONNECT'))
@@ -121,7 +138,7 @@ class ZKLibTCP {
       const handleOnData = (data) => {
         replyBuffer = Buffer.concat([replyBuffer, data])
         if (checkNotEventTCP(data)) return;
-        clearTimeout(timer)   
+        clearTimeout(timer)
         const header = decodeTCPHeader(replyBuffer.subarray(0,16));
 
         if(header.commandId === COMMANDS.CMD_DATA){
@@ -141,7 +158,7 @@ class ZKLibTCP {
       }
 
 
-      
+
       this.socket.on('data', handleOnData)
 
       this.socket.write(msg, null, err => {
@@ -160,16 +177,20 @@ class ZKLibTCP {
 
 
   /**
-   * 
-   * @param {*} command 
-   * @param {*} data 
-   * 
-   * 
+   *
+   * @param {*} command
+   * @param {*} data
+   *
+   *
    * reject error when command fail and resolve data when success
    */
 
   executeCmd(command, data) {
     return new Promise(async (resolve, reject) => {
+
+      if (![COMMANDS.CMD_CONNECT, COMMANDS.CMD_AUTH].includes(command) && !this.is_connect) {
+        throw new ZKError("instance are not connected")
+      }
 
       if (command === COMMANDS.CMD_CONNECT) {
         this.sessionId = 0
@@ -212,11 +233,11 @@ class ZKLibTCP {
 
 
   /**
-   * 
+   *
    * @param {*} reqData - indicate the type of data that need to receive ( user or attLog)
    * @param {*} cb - callback is triggered when receiving packets
-   * 
-   * readWithBuffer will reject error if it'wrong when starting request data 
+   *
+   * readWithBuffer will reject error if it'wrong when starting request data
    * readWithBuffer will return { data: replyData , err: Error } when receiving requested data
    */
   readWithBuffer(reqData, cb = null) {
@@ -279,7 +300,7 @@ class ZKLibTCP {
             clearTimeout(timer)
             timer = setTimeout(() => {
               internalCallback(replyData,
-                new Error(`TIME OUT !! ${totalPackets} PACKETS REMAIN !`))
+                  new Error(`TIME OUT !! ${totalPackets} PACKETS REMAIN !`))
             }, timeout)
 
             totalBuffer = Buffer.concat([totalBuffer, reply])
@@ -290,7 +311,7 @@ class ZKLibTCP {
               totalBuffer = totalBuffer.subarray(8 + packetLength)
 
               if ((totalPackets > 1 && realTotalBuffer.length === MAX_CHUNK + 8)
-                || (totalPackets === 1 && realTotalBuffer.length === remain + 8)) {
+                  || (totalPackets === 1 && realTotalBuffer.length === remain + 8)) {
 
                 replyData = Buffer.concat([replyData, realTotalBuffer.subarray(8)])
                 totalBuffer = Buffer.from([])
@@ -351,7 +372,7 @@ class ZKLibTCP {
     let data = null
     try {
       data = await this.readWithBuffer(REQUEST_DATA.GET_USERS)
- 
+
     } catch (err) {
       return Promise.reject(err)
     }
@@ -377,17 +398,17 @@ class ZKLibTCP {
       users.push(user)
       userData = userData.subarray(USER_PACKET_SIZE)
 
-      
+
     }
-    
+
     return { data: users, err: data.err }
   }
 
 
   /**
-   * 
-   * @param {*} ip 
-   * @param {*} callbackInProcess  
+   *
+   * @param {*} ip
+   * @param {*} callbackInProcess
    *  reject error when starting request data
    *  return { data: records, err: Error } when receiving requested data
    */
@@ -433,10 +454,10 @@ class ZKLibTCP {
   }
 
   async getTime() {
-		const time = await this.executeCmd(COMMANDS.CMD_GET_TIME, '');
-		return timeParser.decode(time.readUInt32LE(8));
-	}
-  
+    const time = await this.executeCmd(COMMANDS.CMD_GET_TIME, '');
+    return timeParser.decode(time.readUInt32LE(8));
+  }
+
   async freeData() {
     return await this.executeCmd(COMMANDS.CMD_FREE_DATA, '')
   }

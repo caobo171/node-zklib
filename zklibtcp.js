@@ -62,7 +62,7 @@ class ZKLibTCP {
     return new Promise(async (resolve, reject) => {
       try {
         let reply = await this.executeCmd(COMMANDS.CMD_CONNECT, '')
-        console.log(reply.readUInt16LE(0))
+
         if (reply.readUInt16LE(0) === COMMANDS.CMD_ACK_OK) {
           resolve(true)
         }

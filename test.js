@@ -2,7 +2,7 @@ const ZKLib = require('./zklib')
 const test = async () => {
 
 
-    let zkInstance = new ZKLib('10.20.0.6', 4370, 10000, 4000);
+    let zkInstance = new ZKLib('192.168.19.19', 4370, 10000, 4000);
     try {
         // Create socket to machine 
         await zkInstance.createSocket()

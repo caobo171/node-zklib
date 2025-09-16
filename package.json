@@ -8,7 +8,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/caobo171/node-zklib.git"
+    "url": "git+https://github.com/florenz-ramos/node-zklib.git"
   },
   "keywords": [
     "zkteco",
@@ -18,13 +18,6 @@
     "attendance",
     "biometrix-device"
   ],
-  "author": "caobo171",
-  "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/caobo171/node-zklib/issues"
-  },
-  "homepage": "https://github.com/caobo171/node-zklib#readme",
-  "dependencies": {
-    "node-zklib": "^1.0.0"
-  }
+  "author": "florenz-ramos",
+  "license": "ISC"
 }

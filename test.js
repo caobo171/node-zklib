@@ -2,7 +2,7 @@ const ZKLib = require('./zklib')
 const test = async () => {
 
 
-    let zkInstance = new ZKLib('10.20.0.6', 4370, 10000, 4000);
+    let zkInstance = new ZKLib('192.168.137.201', 4370, 10000, 4000, 1234, 'tcp');
     try {
         // Create socket to machine 
         await zkInstance.createSocket()
@@ -23,7 +23,6 @@ const test = async () => {
 
     const users = await zkInstance.getUsers();
     console.log(users.data)
-
 }
 
 test()

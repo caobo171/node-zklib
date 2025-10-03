@@ -9,18 +9,24 @@ const { createTCPHeader,
   decodeRecordData40,
   decodeRecordRealTimeLog52,
   checkNotEventTCP,
-  decodeTCPHeader } = require('./utils')
+  decodeTCPHeader,
+  makeCommKey} = require('./utils')
 
-const { log } = require('./helpers/errorLog')
+const { log } = require('./helpers/errorLog');
+const { ZKError } = require('./zkerror');
 
 class ZKLibTCP {
-  constructor(ip, port, timeout) {
+  is_connect = false;
+
+  constructor(ip, port = 4370, timeout = 10000, comm_code = undefined, encoding = 'UTF-8') {
     this.ip = ip
     this.port = port
     this.timeout = timeout
     this.sessionId = null
     this.replyId = 0
     this.socket = null
+    this.comm_code = comm_code
+    this.encoding = encoding
   }
 
 
@@ -55,9 +61,20 @@ class ZKLibTCP {
   connect() {
     return new Promise(async (resolve, reject) => {
       try {
-        const reply = await this.executeCmd(COMMANDS.CMD_CONNECT, '')
-        if (reply) {
+        let reply = await this.executeCmd(COMMANDS.CMD_CONNECT, '')
+
+        if (reply.readUInt16LE(0) === COMMANDS.CMD_ACK_OK) {
           resolve(true)
+        }
+        if (reply.readUInt16LE(0) === COMMANDS.CMD_ACK_UNAUTH) {
+          const hashedCommkey = makeCommKey(this.comm_code, this.sessionId)
+          reply = await this.executeCmd(COMMANDS.CMD_AUTH, hashedCommkey)
+          
+          if (reply.readUInt16LE(0) === COMMANDS.CMD_ACK_OK) {
+            resolve(true)
+          } else {
+            reject(new Error("error de authenticacion", responseCMD))
+          }
         } else {
 
           reject(new Error('NO_REPLY_ON_CMD_CONNECT'))
@@ -170,6 +187,10 @@ class ZKLibTCP {
 
   executeCmd(command, data) {
     return new Promise(async (resolve, reject) => {
+
+      if (![COMMANDS.CMD_CONNECT, COMMANDS.CMD_AUTH].includes(command) && !this.is_connect) {
+        throw new ZKError("instance are not connected")
+      }
 
       if (command === COMMANDS.CMD_CONNECT) {
         this.sessionId = 0

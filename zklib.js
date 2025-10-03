@@ -4,15 +4,16 @@ const ZKLibUDP = require('./zklibudp')
 const { ZKError , ERROR_TYPES } = require('./zkerror')
 
 class ZKLib {
-    constructor(ip, port, timeout , inport){
-        this.connectionType = null
+    constructor(ip, port, timeout , inport, comm_code = 0, protocol){
+        this.connectionType = protocol
 
-        this.zklibTcp = new ZKLibTCP(ip,port,timeout) 
-        this.zklibUdp = new ZKLibUDP(ip,port,timeout , inport) 
+        this.zklibTcp = new ZKLibTCP(ip,port,timeout, comm_code) 
+        this.zklibUdp = new ZKLibUDP(ip,port,timeout , inport, comm_code) 
         this.interval = null 
         this.timer = null
         this.isBusy = false
         this.ip = ip
+        this.comm_code = comm_code || undefined
     }
 
     async functionWrapper (tcpCallback, udpCallback , command ){
@@ -29,7 +30,6 @@ class ZKLib {
                             this.ip
                         ))
                     }
-                       
                 }else{
                     return Promise.reject(new ZKError(
                         new Error( `Socket isn't connected !`),
@@ -78,6 +78,7 @@ class ZKLib {
               
                 try{
                     await this.zklibTcp.connect();
+                    this.zklibTcp.is_connect = true
                     console.log('ok tcp')
                 }catch(err){
                     throw err;

@@ -72,14 +72,14 @@ module.exports.createTCPHeader = (command , sessionId, replyId, data)=>{
   
     buf.writeUInt16LE(command, 0);
     buf.writeUInt16LE(0, 2);
-  
+
     buf.writeUInt16LE(sessionId, 4);
     buf.writeUInt16LE(replyId, 6);
     dataBuffer.copy(buf, 8);
     
     const chksum2 = createChkSum(buf);
     buf.writeUInt16LE(chksum2, 2);
-      
+
     replyId = (replyId + 1) % USHRT_MAX;
     buf.writeUInt16LE(replyId, 6);
     
@@ -233,4 +233,46 @@ module.exports.checkNotEventTCP = (data)=> {
 module.exports.checkNotEventUDP = (data)=>{
   const commandId = this.decodeUDPHeader(data.subarray(0,8)).commandId
   return commandId === COMMANDS.CMD_REG_EVENT
+}
+
+module.exports.makeCommKey = (key, sessionId, ticks = 50) => {
+  // Ensure key and sessionId are integers
+  key = Math.floor(key);
+  sessionId = Math.floor(sessionId);
+
+  let k = 0;
+  
+  // Reverse the bits of 'key'
+  for (let i = 0; i < 32; i++) {
+      if (key & (1 << i)) {
+          k = (k << 1) | 1;
+      } else {
+          k = k << 1;
+      }
+  }
+  
+  // Add sessionId
+  k += sessionId;
+
+  // Convert to 4-byte buffer (Little Endian)
+  const buffer = new ArrayBuffer(4);
+  const view = new DataView(buffer);
+  view.setUint32(0, k, true);
+  let bytes = new Uint8Array(buffer);
+
+  // XOR with 'ZKSO'
+  const xorKey = ["Z", "K", "S", "O"].map(c => c.charCodeAt(0));
+  bytes = bytes.map((b, i) => b ^ xorKey[i]);
+
+  // Swap 16-bit pairs
+  const swapped = new Uint8Array([bytes[2], bytes[3], bytes[0], bytes[1]]);
+
+  // Apply 'ticks' XOR transformation
+  const B = ticks & 0xff;
+  return [
+      swapped[0] ^ B,
+      swapped[1] ^ B,
+      B,
+      swapped[3] ^ B
+  ];
 }

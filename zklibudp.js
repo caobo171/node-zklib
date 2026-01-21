@@ -425,6 +425,26 @@ class ZKLibUDP {
 		return timeParser.decode(time.readUInt32LE(8));
 	}
 
+  async setTime(tm) {
+    try {
+        // Create a buffer for the command
+        const commandBuffer = Buffer.alloc(32);
+
+        // Encode the time and write it to the buffer
+        commandBuffer.writeUInt32LE(timeParser.encode(new Date(tm)), 0);
+
+        // Send the command to set the time
+        await this.executeCmd(COMMANDS.CMD_SET_TIME, commandBuffer);
+
+        // Indicate success
+        return true;
+    } catch (err) {
+        // Log and propagate the error
+        console.error('Error setting time:', err);
+        throw err; // Re-throw the error to allow it to be handled by the caller
+    }
+  }
+
   async getInfo() {
     const data = await this.executeCmd(COMMANDS.CMD_GET_FREE_SIZES, '')
     try {

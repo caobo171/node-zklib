@@ -30,6 +30,7 @@ class ZKLib {
                             this.ip
                         ))
                     }
+                       
                 }else{
                     return Promise.reject(new ZKError(
                         new Error( `Socket isn't connected !`),
@@ -168,6 +169,13 @@ class ZKLib {
 			() => this.zklibUdp.getTime()
 		);
 	}
+
+    async setTime(t) {
+        return await this.functionWrapper(
+            () => this.zklibTcp.setTime(t),
+            () => this.zklibUdp.setTime(t)
+        )
+    }
 
     async disableDevice(){
         return await this. functionWrapper(

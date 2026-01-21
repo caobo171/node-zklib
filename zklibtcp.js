@@ -438,13 +438,13 @@ class ZKLibTCP {
       }
     }
 
+    let recordData = data.data.subarray(4)
+    let records = []
+
     //Notes on record packet size:
     //40 for tft and b&w devices (default)
     //49 for iface devices
     const RECORD_PACKET_SIZE = recordData.length % 40 !== 0 ? 49 : 40 ;
-
-    let recordData = data.data.subarray(4)
-    let records = []
 
     // Ensure the data size aligns with RECORD_PACKET_SIZE
     if (recordData.length % RECORD_PACKET_SIZE !== 0) {

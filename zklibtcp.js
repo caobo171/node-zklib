@@ -438,11 +438,19 @@ class ZKLibTCP {
       }
     }
 
-
-    const RECORD_PACKET_SIZE = 40
+    //Notes on record packet size:
+    //40 for tft and b&w devices (default)
+    //49 for iface devices
+    const RECORD_PACKET_SIZE = recordData.length % 40 !== 0 ? 49 : 40 ;
 
     let recordData = data.data.subarray(4)
     let records = []
+
+    // Ensure the data size aligns with RECORD_PACKET_SIZE
+    if (recordData.length % RECORD_PACKET_SIZE !== 0) {
+        console.warn("Warning: Attendance data may be incomplete or corrupt");
+    }
+
     while (recordData.length >= RECORD_PACKET_SIZE) {
       const record = decodeRecordData40(recordData.subarray(0, RECORD_PACKET_SIZE))
       records.push({ ...record, ip: this.ip })
@@ -457,6 +465,33 @@ class ZKLibTCP {
 		const time = await this.executeCmd(COMMANDS.CMD_GET_TIME, '');
 		return timeParser.decode(time.readUInt32LE(8));
 	}
+
+  async setTime(tm) {
+    try {
+      // Validate the input time
+      if (!(tm instanceof Date) && typeof tm !== 'number') {
+          throw new TypeError('Invalid time parameter. Must be a Date object or a timestamp.');
+      }
+
+      // Convert the input time to a Date object if it's not already
+      const date = (tm instanceof Date) ? tm : new Date(tm);
+
+      // Encode the time into the required format
+      const encodedTime = timeParser.encode(date);
+
+      // Create a buffer and write the encoded time
+      const commandString = Buffer.alloc(32);
+      commandString.writeUInt32LE(encodedTime, 0);
+
+      // Send the command to set the time
+      return await this.executeCmd(COMMANDS.CMD_SET_TIME, commandString);
+    } catch (err) {
+        // Log the error for debugging
+        console.error('Error setting time:', err);
+        // Re-throw the error for the caller to handle
+        throw err;
+    }
+  }
   
   async freeData() {
     return await this.executeCmd(COMMANDS.CMD_FREE_DATA, '')

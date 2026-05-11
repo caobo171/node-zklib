@@ -192,7 +192,8 @@ class ZKLibUDP {
         const buf = createUDPHeader(command, this.sessionId, this.replyId, data)
         const reply = await this.writeMessage(buf, command === COMMANDS.CMD_CONNECT || command === COMMANDS.CMD_EXIT)
 
-        if (reply && reply.length && reply.length >= 0) {
+        // Only parse the session id when the reply is at least one full ZK header.
+        if (reply && reply.length >= PROTOCOL.ZK_HEADER_LEN) {
           if (command === COMMANDS.CMD_CONNECT) {
             this.sessionId = reply.readUInt16LE(4);
           }

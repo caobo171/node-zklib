@@ -105,7 +105,6 @@ class ZKLib {
                 try{
                     await this.zklibTcp.connect();
                     this.zklibTcp.is_connect = true
-                    console.log('ok tcp')
                 }catch(err){
                     throw err;
                 }
@@ -128,7 +127,6 @@ class ZKLib {
                     await this.zklibUdp.connect()
                 }   
                 
-                console.log('ok udp')
                 this.connectionType = 'udp'
             }catch(err){
 

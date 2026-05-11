@@ -174,7 +174,7 @@ class ZKLibTCP {
           }, this.timeout)
 
           const packetLength = data.readUIntLE(4, 2)
-          if (packetLength > 8) {
+          if (packetLength > PROTOCOL.ZK_HEADER_LEN) {
             internalCallback(data)
           }
         }

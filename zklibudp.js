@@ -1,3 +1,11 @@
+/**
+ * UDP transport for node-zklib.
+ *
+ * Parallels zklibtcp.js but talks to the device over dgram. Owns its own
+ * sessionId/replyId handshake state and reassembles chunked data replies.
+ * UDP firmwares are typically older and use compact (28-byte user, 16-byte
+ * attendance) record layouts — see PACKET_SIZES.
+ */
 const dgram = require('dgram');
 const timeParser = require('./timeParser');
 
@@ -8,12 +16,21 @@ const {
   decodeRecordRealTimeLog18,
   decodeUDPHeader,
   exportErrorMessage,
-  checkNotEventUDP
+  isEventPacketUDP,
 } = require('./utils')
 
-const { MAX_CHUNK, REQUEST_DATA, COMMANDS } = require('./constants')
+const {
+  MAX_CHUNK,
+  REQUEST_DATA,
+  COMMANDS,
+  PROTOCOL,
+  PACKET_SIZES,
+  FREE_SIZES_OFFSETS,
+  TIMEOUTS,
+} = require('./constants')
 
 const { log } = require('./helpers/errorLog')
+const { ZKError } = require('./zkerror')
 
 class ZKLibUDP {
   constructor(ip, port, timeout, inport, comm_key) {
@@ -25,6 +42,8 @@ class ZKLibUDP {
     this.replyId = 0
     this.inport = inport
     this.comm_key = comm_key
+    // Mirrors zklibtcp's gate — set true after a successful CMD_CONNECT.
+    this.is_connect = false
   }
 
   createSocket(cbError, cbClose) {
@@ -57,6 +76,7 @@ class ZKLibUDP {
       try {
         const reply = await this.executeCmd(COMMANDS.CMD_CONNECT, '')
         if (reply) {
+          this.is_connect = true
           resolve(true)
         } else {
           reject(new Error('NO_REPLY_ON_CMD_CONNECT'))
@@ -82,7 +102,7 @@ class ZKLibUDP {
        */
       const timer = setTimeout(() => {
         resolve(true)
-      }, 2000)
+      }, TIMEOUTS.CLOSE_SOCKET)
     })
   }
 
@@ -102,7 +122,7 @@ class ZKLibUDP {
           sendTimeoutId = setTimeout(() => {
             clearTimeout(sendTimeoutId)
             reject(new Error('TIMEOUT_ON_WRITING_MESSAGE'))
-          }, connect ? 2000 : this.timeout)
+          }, connect ? TIMEOUTS.CONNECT : this.timeout)
         }
       })
     })
@@ -118,13 +138,13 @@ class ZKLibUDP {
       }
 
       const handleOnData = (data) => {
-        if (checkNotEventUDP(data)) return;
+        if (isEventPacketUDP(data)) return;
         clearTimeout(sendTimeoutId)
         sendTimeoutId = setTimeout(() => {
           reject(new Error('TIMEOUT_ON_RECEIVING_REQUEST_DATA'))
         }, this.timeout)
 
-        if (data.length >= 13) {
+        if (data.length >= PROTOCOL.UDP_MIN_DATA_REPLY) {
           internalCallback(data)
         }
 
@@ -156,6 +176,11 @@ class ZKLibUDP {
   executeCmd(command, data) {
     return new Promise(async (resolve, reject) => {
       try {
+        // Mirror TCP behavior: reject pre-connect calls. CMD_CONNECT/CMD_AUTH bypass the gate.
+        if (![COMMANDS.CMD_CONNECT, COMMANDS.CMD_AUTH].includes(command) && !this.is_connect) {
+          return reject(new ZKError(new Error('NOT_CONNECTED'), 'executeCmd', this.ip))
+        }
+
         if (command === COMMANDS.CMD_CONNECT) {
           this.sessionId = 0
           this.replyId = 0
@@ -219,18 +244,18 @@ class ZKLibUDP {
         reject(err)
       }
 
-      const header = decodeUDPHeader(reply.subarray(0, 8))
+      const header = decodeUDPHeader(reply.subarray(0, PROTOCOL.ZK_HEADER_LEN))
 
       switch (header.commandId) {
         case COMMANDS.CMD_DATA: {
-          resolve({ data: reply.subarray(8), mode: 8, err: null })
+          resolve({ data: reply.subarray(PROTOCOL.ZK_HEADER_LEN), mode: 8, err: null })
           break;
         }
         case COMMANDS.CMD_ACK_OK:
         case COMMANDS.CMD_PREPARE_DATA: {
           // this case show that data is prepared => send command to get these data 
           // reply variable includes information about the size of following data 
-          const recvData = reply.subarray(8)
+          const recvData = reply.subarray(PROTOCOL.ZK_HEADER_LEN)
           const size = recvData.readUIntLE(1, 4)
 
           // We need to split the data to many chunks to receive , because it's to large
@@ -241,7 +266,7 @@ class ZKLibUDP {
           let totalBuffer = Buffer.from([])
 
 
-          const timeout = 3000
+          const timeout = TIMEOUTS.CHUNK_UDP
           let timer = setTimeout(() => {
             internalCallback(totalBuffer, new Error('TIMEOUT WHEN RECEIVING PACKET'))
           }, timeout)
@@ -259,11 +284,11 @@ class ZKLibUDP {
 
 
           const handleOnData = (reply) => {
-            if (checkNotEventUDP(reply)) return;
+            if (isEventPacketUDP(reply)) return;
             clearTimeout(timer)
             timer = setTimeout(() => {
-              internalCallback(totalBuffer,
-                new Error(`TIMEOUT !! ${(size - totalBuffer.length) / size} % REMAIN !  `))
+              const pct = Math.round((1 - totalBuffer.length / size) * 100)
+              internalCallback(totalBuffer, new Error(`TIMEOUT — ${pct}% REMAIN`))
             }, timeout)
             const header = decodeUDPHeader(reply)
 
@@ -272,7 +297,7 @@ class ZKLibUDP {
                 break;
               }
               case COMMANDS.CMD_DATA: {
-                totalBuffer = Buffer.concat([totalBuffer, reply.subarray(8)])
+                totalBuffer = Buffer.concat([totalBuffer, reply.subarray(PROTOCOL.ZK_HEADER_LEN)])
                 cb && cb(totalBuffer.length, size)
                 break;
               }
@@ -336,14 +361,14 @@ class ZKLibUDP {
       }
     }
 
-    const USER_PACKET_SIZE = 28
+    // UDP firmwares use compact 28-byte user records (no password/cardno).
+    const recordSize = PACKET_SIZES.USER_UDP
     let userData = data.data.subarray(4)
-    let users = []
+    const users = []
 
-    while (userData.length >= USER_PACKET_SIZE) {
-      const user = decodeUserData28(userData.subarray(0, USER_PACKET_SIZE))
-      users.push(user)
-      userData = userData.subarray(USER_PACKET_SIZE)
+    while (userData.length >= recordSize) {
+      users.push(decodeUserData28(userData.subarray(0, recordSize)))
+      userData = userData.subarray(recordSize)
     }
 
     return { data: users, err: data.err }
@@ -384,33 +409,19 @@ class ZKLibUDP {
       }
     }
 
-    if (data.mode) {
-      // Data too small to decode in a normal way  => we need a parameter to indicate this case 
-      const RECORD_PACKET_SIZE = 8
-      let recordData = data.data.subarray(4)
+    // `data.mode` is set when the device returned a small (CMD_DATA inline) reply
+    // — those use half-width 8-byte records. Otherwise the records are 16 bytes.
+    const recordSize = data.mode ? PACKET_SIZES.ATT_LOG_UDP_COMPACT : PACKET_SIZES.ATT_LOG_UDP_FULL
+    let recordData = data.data.subarray(4)
+    const records = []
 
-      let records = []
-      while (recordData.length >= RECORD_PACKET_SIZE) {
-        const record = decodeRecordData16(recordData.subarray(0, RECORD_PACKET_SIZE))
-        records.push({ ...record, ip: this.ip })
-        recordData = recordData.subarray(RECORD_PACKET_SIZE)
-      }
-
-      return { data: records, err: data.err }
-
-    } else {
-      const RECORD_PACKET_SIZE = 16
-      let recordData = data.data.subarray(4)
-
-      let records = []
-      while (recordData.length >= RECORD_PACKET_SIZE) {
-        const record = decodeRecordData16(recordData.subarray(0, RECORD_PACKET_SIZE))
-        records.push({ ...record, ip: this.ip })
-        recordData = recordData.subarray(RECORD_PACKET_SIZE)
-      }
-
-      return { data: records, err: data.err }
+    while (recordData.length >= recordSize) {
+      const record = decodeRecordData16(recordData.subarray(0, recordSize))
+      records.push({ ...record, ip: this.ip })
+      recordData = recordData.subarray(recordSize)
     }
+
+    return { data: records, err: data.err }
 
   }
 
@@ -429,9 +440,9 @@ class ZKLibUDP {
     const data = await this.executeCmd(COMMANDS.CMD_GET_FREE_SIZES, '')
     try {
       return {
-        userCounts: data.readUIntLE(24, 4),
-        logCounts: data.readUIntLE(40, 4),
-        logCapacity: data.readUIntLE(72, 4)
+        userCounts: data.readUIntLE(FREE_SIZES_OFFSETS.USER_COUNT, 4),
+        logCounts: data.readUIntLE(FREE_SIZES_OFFSETS.LOG_COUNT, 4),
+        logCapacity: data.readUIntLE(FREE_SIZES_OFFSETS.LOG_CAPACITY, 4),
       }
     } catch (err) {
       return Promise.reject(err)
@@ -455,7 +466,9 @@ class ZKLibUDP {
     try {
       await this.executeCmd(COMMANDS.CMD_EXIT, '')
     } catch (err) {
+      // CMD_EXIT errors are non-fatal — we still want to close the socket.
     }
+    this.is_connect = false
     return await this.closeSocket()
   }
 
@@ -471,8 +484,8 @@ class ZKLibUDP {
 
     this.socket.listenerCount('message') < 2 && this.socket.on('message', (data) => {
 
-      if (!checkNotEventUDP(data)) return;
-      if (data.length === 18) {
+      if (!isEventPacketUDP(data)) return;
+      if (data.length === PACKET_SIZES.REALTIME_LOG_UDP) {
         cb(decodeRecordRealTimeLog18(data))
       }
     })

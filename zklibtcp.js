@@ -1,16 +1,35 @@
+/**
+ * TCP transport for node-zklib.
+ *
+ * Implements the same operation surface as zklibudp.js but over a streamed
+ * net.Socket connection. Owns sessionId/replyId handshake state and chunks
+ * large data replies into MAX_CHUNK-sized requests. All operations require a
+ * prior successful connect(); methods called before connect reject through
+ * the executeCmd gate.
+ */
 const net = require('net')
 const timeParser = require('./timeParser');
 
-const { MAX_CHUNK, COMMANDS, REQUEST_DATA } = require('./constants')
-const { createTCPHeader,
+const {
+  MAX_CHUNK,
+  COMMANDS,
+  REQUEST_DATA,
+  PROTOCOL,
+  PACKET_SIZES,
+  FREE_SIZES_OFFSETS,
+  TIMEOUTS,
+} = require('./constants')
+const {
+  createTCPHeader,
   exportErrorMessage,
   removeTcpHeader,
   decodeUserData72,
   decodeRecordData40,
   decodeRecordRealTimeLog52,
-  checkNotEventTCP,
+  isEventPacketTCP,
   decodeTCPHeader,
-  makeCommKey} = require('./utils')
+  makeCommKey,
+} = require('./utils')
 
 const { log } = require('./helpers/errorLog');
 const { ZKError } = require('./zkerror');
@@ -73,7 +92,7 @@ class ZKLibTCP {
           if (reply.readUInt16LE(0) === COMMANDS.CMD_ACK_OK) {
             resolve(true)
           } else {
-            reject(new Error("error de authenticacion", responseCMD))
+            reject(new Error('AUTH_FAILED: 0x' + reply.readUInt16LE(0).toString(16)))
           }
         } else {
 
@@ -97,9 +116,10 @@ class ZKLibTCP {
        * When socket isn't connected so this.socket.end will never resolve
        * we use settimeout for handling this case
        */
+      // Devices occasionally don't send FIN — resolve anyway after the fallback.
       const timer = setTimeout(() => {
         resolve(true)
-      }, 2000)
+      }, TIMEOUTS.CLOSE_SOCKET)
     })
   }
 
@@ -116,10 +136,11 @@ class ZKLibTCP {
         if (err) {
           reject(err)
         } else if (this.timeout) {
-          timer = await setTimeout(() => {
+          // Connect/exit commands get a fixed short window; data commands honor user timeout.
+          timer = setTimeout(() => {
             clearTimeout(timer)
             reject(new Error('TIMEOUT_ON_WRITING_MESSAGE'))
-          }, connect ? 2000 : this.timeout)
+          }, connect ? TIMEOUTS.CONNECT : this.timeout)
         }
       })
     })
@@ -137,14 +158,16 @@ class ZKLibTCP {
 
       const handleOnData = (data) => {
         replyBuffer = Buffer.concat([replyBuffer, data])
-        if (checkNotEventTCP(data)) return;
+        if (isEventPacketTCP(data)) return;
         clearTimeout(timer)   
-        const header = decodeTCPHeader(replyBuffer.subarray(0,16));
+        const header = decodeTCPHeader(replyBuffer.subarray(0, PROTOCOL.TCP_FULL_HEADER_LEN));
 
-        if(header.commandId === COMMANDS.CMD_DATA){
-          timer = setTimeout(()=>{
+        if (header.commandId === COMMANDS.CMD_DATA) {
+          // After a CMD_DATA frame we wait a short quiet period before resolving,
+          // because the device sometimes splits the payload across two writes.
+          timer = setTimeout(() => {
             internalCallback(replyBuffer)
-          }, 1000)
+          }, TIMEOUTS.PACKET_END)
         }else{
           timer = setTimeout(() => {
             reject(new Error('TIMEOUT_ON_RECEIVING_REQUEST_DATA'))
@@ -189,7 +212,9 @@ class ZKLibTCP {
     return new Promise(async (resolve, reject) => {
 
       if (![COMMANDS.CMD_CONNECT, COMMANDS.CMD_AUTH].includes(command) && !this.is_connect) {
-        throw new ZKError("instance are not connected")
+        // Reject (not throw) so the surrounding Promise resolves correctly.
+        // Use the ZKError constructor signature: (err, command, ip).
+        return reject(new ZKError(new Error('NOT_CONNECTED'), 'executeCmd', this.ip))
       }
 
       if (command === COMMANDS.CMD_CONNECT) {
@@ -205,7 +230,8 @@ class ZKLibTCP {
         reply = await this.writeMessage(buf, command === COMMANDS.CMD_CONNECT || command === COMMANDS.CMD_EXIT)
 
         const rReply = removeTcpHeader(reply);
-        if (rReply && rReply.length && rReply.length >= 0) {
+        // Only parse the session id when the reply is at least one full ZK header.
+        if (rReply && rReply.length >= PROTOCOL.ZK_HEADER_LEN) {
           if (command === COMMANDS.CMD_CONNECT) {
             this.sessionId = rReply.readUInt16LE(4);
           }
@@ -254,17 +280,17 @@ class ZKLibTCP {
         reject(err)
       }
 
-      const header = decodeTCPHeader(reply.subarray(0, 16))
+      const header = decodeTCPHeader(reply.subarray(0, PROTOCOL.TCP_FULL_HEADER_LEN))
       switch (header.commandId) {
         case COMMANDS.CMD_DATA: {
-          resolve({ data: reply.subarray(16), mode: 8 })
+          resolve({ data: reply.subarray(PROTOCOL.TCP_FULL_HEADER_LEN), mode: 8 })
           break;
         }
         case COMMANDS.CMD_ACK_OK:
         case COMMANDS.CMD_PREPARE_DATA: {
           // this case show that data is prepared => send command to get these data 
           // reply variable includes information about the size of following data
-          const recvData = reply.subarray(16)
+          const recvData = reply.subarray(PROTOCOL.TCP_FULL_HEADER_LEN)
           const size = recvData.readUIntLE(1, 4)
 
 
@@ -280,7 +306,7 @@ class ZKLibTCP {
           let realTotalBuffer = Buffer.from([])
 
 
-          const timeout = 10000
+          const timeout = TIMEOUTS.CHUNK_TCP
           let timer = setTimeout(() => {
             internalCallback(replyData, new Error('TIMEOUT WHEN RECEIVING PACKET'))
           }, timeout)
@@ -296,7 +322,7 @@ class ZKLibTCP {
 
           const handleOnData = (reply) => {
 
-            if (checkNotEventTCP(reply)) return;
+            if (isEventPacketTCP(reply)) return;
             clearTimeout(timer)
             timer = setTimeout(() => {
               internalCallback(replyData,
@@ -305,15 +331,18 @@ class ZKLibTCP {
 
             totalBuffer = Buffer.concat([totalBuffer, reply])
             const packetLength = totalBuffer.readUIntLE(4, 2)
-            if (totalBuffer.length >= 8 + packetLength) {
+            if (totalBuffer.length >= PROTOCOL.TCP_PREFIX_LEN + packetLength) {
 
-              realTotalBuffer = Buffer.concat([realTotalBuffer, totalBuffer.subarray(16, 8 + packetLength)])
-              totalBuffer = totalBuffer.subarray(8 + packetLength)
+              realTotalBuffer = Buffer.concat([
+                realTotalBuffer,
+                totalBuffer.subarray(PROTOCOL.TCP_FULL_HEADER_LEN, PROTOCOL.TCP_PREFIX_LEN + packetLength),
+              ])
+              totalBuffer = totalBuffer.subarray(PROTOCOL.TCP_PREFIX_LEN + packetLength)
 
-              if ((totalPackets > 1 && realTotalBuffer.length === MAX_CHUNK + 8)
-                || (totalPackets === 1 && realTotalBuffer.length === remain + 8)) {
+              if ((totalPackets > 1 && realTotalBuffer.length === MAX_CHUNK + PROTOCOL.ZK_HEADER_LEN)
+                || (totalPackets === 1 && realTotalBuffer.length === remain + PROTOCOL.ZK_HEADER_LEN)) {
 
-                replyData = Buffer.concat([replyData, realTotalBuffer.subarray(8)])
+                replyData = Buffer.concat([replyData, realTotalBuffer.subarray(PROTOCOL.ZK_HEADER_LEN)])
                 totalBuffer = Buffer.from([])
                 realTotalBuffer = Buffer.from([])
 
@@ -351,10 +380,6 @@ class ZKLibTCP {
   }
 
 
-  async getSmallAttendanceLogs(){
-
-  }
-
   /**
    *  reject error when starting request data
    *  return { data: users, err: Error } when receiving requested data
@@ -387,18 +412,16 @@ class ZKLibTCP {
     }
 
 
-    const USER_PACKET_SIZE = 72
+    // TCP firmwares emit 72-byte user records. The first 4 bytes of the reply
+    // payload are a count header — skip them before record parsing.
+    const recordSize = PACKET_SIZES.USER_TCP
 
     let userData = data.data.subarray(4)
+    const users = []
 
-    let users = []
-
-    while (userData.length >= USER_PACKET_SIZE) {
-      const user = decodeUserData72(userData.subarray(0, USER_PACKET_SIZE))
-      users.push(user)
-      userData = userData.subarray(USER_PACKET_SIZE)
-
-      
+    while (userData.length >= recordSize) {
+      users.push(decodeUserData72(userData.subarray(0, recordSize)))
+      userData = userData.subarray(recordSize)
     }
     
     return { data: users, err: data.err }
@@ -439,14 +462,15 @@ class ZKLibTCP {
     }
 
 
-    const RECORD_PACKET_SIZE = 40
+    // First 4 bytes of payload = count header; remainder is fixed-width records.
+    const recordSize = PACKET_SIZES.ATT_LOG_TCP
 
     let recordData = data.data.subarray(4)
-    let records = []
-    while (recordData.length >= RECORD_PACKET_SIZE) {
-      const record = decodeRecordData40(recordData.subarray(0, RECORD_PACKET_SIZE))
+    const records = []
+    while (recordData.length >= recordSize) {
+      const record = decodeRecordData40(recordData.subarray(0, recordSize))
       records.push({ ...record, ip: this.ip })
-      recordData = recordData.subarray(RECORD_PACKET_SIZE)
+      recordData = recordData.subarray(recordSize)
     }
 
     return { data: records, err: data.err }
@@ -483,10 +507,11 @@ class ZKLibTCP {
     try {
       const data = await this.executeCmd(COMMANDS.CMD_GET_FREE_SIZES, '')
 
+      // CMD_GET_FREE_SIZES reply layout — see FREE_SIZES_OFFSETS.
       return {
-        userCounts: data.readUIntLE(24, 4),
-        logCounts: data.readUIntLE(40, 4),
-        logCapacity: data.readUIntLE(72, 4)
+        userCounts: data.readUIntLE(FREE_SIZES_OFFSETS.USER_COUNT, 4),
+        logCounts: data.readUIntLE(FREE_SIZES_OFFSETS.LOG_COUNT, 4),
+        logCapacity: data.readUIntLE(FREE_SIZES_OFFSETS.LOG_CAPACITY, 4),
       }
     } catch (err) {
       return Promise.reject(err)
@@ -507,8 +532,9 @@ class ZKLibTCP {
 
     this.socket.listenerCount('data') === 0 && this.socket.on('data', (data) => {
 
-      if (!checkNotEventTCP(data)) return;
-      if (data.length > 16) {
+      // Only forward real-time event packets; ignore replies to other in-flight commands.
+      if (!isEventPacketTCP(data)) return;
+      if (data.length > PROTOCOL.TCP_FULL_HEADER_LEN) {
         cb(decodeRecordRealTimeLog52(data))
       }
 

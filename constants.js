@@ -103,3 +103,53 @@ module.exports.REQUEST_DATA = {
     GET_ATTENDANCE_LOGS : Buffer.from([0x01, 0x0d, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
     GET_USERS : Buffer.from([ 0x01, 0x09, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
 }
+
+// === Wire-format primitives ===
+// "PP\x82}" — the fixed 4-byte marker every ZK TCP frame starts with.
+// Source: https://github.com/adrobinoga/zk-protocol/blob/master/protocol.md
+module.exports.PROTOCOL = {
+    TCP_MAGIC_PREFIX: Buffer.from([0x50, 0x50, 0x82, 0x7d]),
+    TCP_PREFIX_LEN: 8,         // magic(4) + reserved(2) + payloadLen(2)
+    ZK_HEADER_LEN: 8,          // command(2) + checksum(2) + sessionId(2) + replyId(2)
+    TCP_FULL_HEADER_LEN: 16,   // TCP_PREFIX_LEN + ZK_HEADER_LEN
+    UDP_MIN_DATA_REPLY: 13,    // smallest UDP payload that carries a usable reply
+}
+
+// === Record sizes (bytes per record) returned by the device. ===
+// USER_TCP vs USER_UDP differ because older UDP-only firmwares emit a
+// compact 28-byte user record; modern firmwares over TCP emit 72 bytes.
+module.exports.PACKET_SIZES = {
+    USER_TCP: 72,
+    USER_UDP: 28,
+    ATT_LOG_TCP: 40,
+    ATT_LOG_UDP_FULL: 16,
+    ATT_LOG_UDP_COMPACT: 8,    // some UDP devices emit half-width records
+    REALTIME_LOG_TCP: 52,
+    REALTIME_LOG_UDP: 18,
+}
+
+// === Byte offsets inside the CMD_GET_FREE_SIZES reply. ===
+// Each value is a little-endian uint32 at the given offset.
+module.exports.FREE_SIZES_OFFSETS = {
+    USER_COUNT: 24,
+    LOG_COUNT: 40,
+    LOG_CAPACITY: 72,
+}
+
+// === Comm-key derivation (makeCommKey). ===
+// Matches the reference implementation at zk-protocol/auth.md.
+module.exports.AUTH = {
+    COMM_KEY_TICKS: 50,
+    COMM_KEY_XOR: ['Z', 'K', 'S', 'O'],
+}
+
+// === Timeouts (milliseconds). ===
+// CONNECT is intentionally shorter than the user-supplied timeout because
+// CMD_CONNECT/CMD_EXIT should fail fast — the device is either reachable or not.
+module.exports.TIMEOUTS = {
+    CONNECT: 2000,
+    CLOSE_SOCKET: 2000,
+    CHUNK_TCP: 10000,
+    CHUNK_UDP: 3000,
+    PACKET_END: 1000,
+}

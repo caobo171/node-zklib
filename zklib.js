@@ -1,15 +1,35 @@
+/**
+ * node-zklib — public client class.
+ *
+ * Owns one ZKLibTCP and one ZKLibUDP transport. Every public method delegates
+ * through functionWrapper(), which dispatches based on connectionType
+ * ('tcp' | 'udp') and wraps thrown errors as ZKError instances.
+ *
+ * Connection strategy: createSocket() always tries TCP first; on ECONNREFUSED
+ * it falls back to UDP. UDP EADDRINUSE during bind is treated as success
+ * (socket already bound from a previous run).
+ */
 const ZKLibTCP = require('./zklibtcp')
 const ZKLibUDP = require('./zklibudp')
 
-const { ZKError , ERROR_TYPES } = require('./zkerror')
+const { ZKError, ERROR_TYPES } = require('./zkerror')
 
 class ZKLib {
-    constructor(ip, port, timeout , inport, comm_code = 0, protocol){
+    /**
+     * @param {string} ip          Device IP address.
+     * @param {number} port        Device TCP/UDP port (typically 4370).
+     * @param {number} timeout     Per-request timeout in milliseconds.
+     * @param {number} inport      Local UDP bind port (used only on UDP fallback).
+     * @param {number} [comm_code] Device communication password (0 = disabled).
+     * @param {string} [protocol]  'tcp' | 'udp'. Omit to auto-detect (TCP, then UDP).
+     */
+    constructor(ip, port, timeout, inport, comm_code = 0, protocol = null) {
+        // null until createSocket() succeeds; functionWrapper rejects calls before then.
         this.connectionType = protocol
 
-        this.zklibTcp = new ZKLibTCP(ip,port,timeout, comm_code) 
-        this.zklibUdp = new ZKLibUDP(ip,port,timeout , inport, comm_code) 
-        this.interval = null 
+        this.zklibTcp = new ZKLibTCP(ip, port, timeout, comm_code)
+        this.zklibUdp = new ZKLibUDP(ip, port, timeout, inport, comm_code)
+        this.interval = null
         this.timer = null
         this.isBusy = false
         this.ip = ip
@@ -58,13 +78,19 @@ class ZKLib {
                 }
             default:
                 return Promise.reject(new ZKError(
-                    new Error( `Socket isn't connected !`),
-                    '',
+                    new Error("Socket isn't connected — call createSocket() first"),
+                    command || 'functionWrapper',
                     this.ip
                 ))
         }
     }
 
+    /**
+     * Open the device connection. Tries TCP first, falls back to UDP on ECONNREFUSED.
+     * @param {(err: Error) => void} [cbErr]   Optional socket-error callback.
+     * @param {(transport: 'tcp' | 'udp') => void} [cbClose] Optional close callback.
+     * @returns {Promise<void>} Rejects with ZKError if neither transport connects.
+     */
     async createSocket(cbErr, cbClose){
         try{
             if(!this.zklibTcp.socket){
@@ -127,6 +153,10 @@ class ZKLib {
         }
     }
 
+    /**
+     * @returns {Promise<{ data: object[], err: Error|null }>}
+     *   `data` is an array of users; shape differs by transport (see README).
+     */
     async getUsers(){
         return await this.functionWrapper(
             ()=> this.zklibTcp.getUsers(),
@@ -134,6 +164,11 @@ class ZKLib {
         )
     }
 
+    /**
+     * @param {(received: number, total: number) => void} [cb]
+     *   Progress callback fired as chunks arrive.
+     * @returns {Promise<{ data: object[], err: Error|null }>} Attendance records.
+     */
     async getAttendances(cb){
         return await this.functionWrapper(
             ()=> this.zklibTcp.getAttendances(cb),
@@ -141,6 +176,11 @@ class ZKLib {
         )
     }
 
+    /**
+     * Subscribe to real-time attendance events. Resolves immediately after
+     * registering; events arrive via the callback until disconnect().
+     * @param {(event: { userId: string, attTime: Date }) => void} cb
+     */
     async getRealTimeLogs(cb){
         return await this.functionWrapper(
             ()=> this.zklibTcp.getRealTimeLogs(cb),
@@ -148,6 +188,10 @@ class ZKLib {
         )
     }
 
+    /**
+     * Send CMD_EXIT and close the socket. Safe to call when already disconnected.
+     * @returns {Promise<boolean>}
+     */
     async disconnect(){
         return await this.functionWrapper(
             ()=> this.zklibTcp.disconnect(),
@@ -155,6 +199,10 @@ class ZKLib {
         )
     }
 
+    /**
+     * Tell the device to release its internal data buffer. Called automatically
+     * before and after getUsers/getAttendances; rarely needed directly.
+     */
     async freeData(){
         return await this. functionWrapper(
             ()=> this.zklibTcp.freeData(),
@@ -162,6 +210,7 @@ class ZKLib {
         )
     }
     
+    /** @returns {Promise<Date>} The device's current local time. */
 	async getTime() {
 		return await this.functionWrapper(
 			() => this.zklibTcp.getTime(),
@@ -169,6 +218,7 @@ class ZKLib {
 		);
 	}
 
+    /** Put the device into a disabled state (no keyboard, no fingerprint). */
     async disableDevice(){
         return await this. functionWrapper(
             ()=>this.zklibTcp.disableDevice(),
@@ -177,6 +227,7 @@ class ZKLib {
     }
 
 
+    /** Re-enable the device after disableDevice(). */
     async enableDevice(){
         return await this.functionWrapper(
             ()=>this.zklibTcp.enableDevice(),
@@ -185,6 +236,9 @@ class ZKLib {
     }
 
 
+    /**
+     * @returns {Promise<{ userCounts: number, logCounts: number, logCapacity: number }>}
+     */
     async getInfo(){
         return await this.functionWrapper(
             ()=> this.zklibTcp.getInfo(),
@@ -200,6 +254,10 @@ class ZKLib {
         )
     }
 
+    /**
+     * Delete all attendance records on the device. Irreversible.
+     * Recommended when the device approaches `logCapacity`; large logs slow it down.
+     */
     async clearAttendanceLog(){
         return await this.functionWrapper(
             ()=> this.zklibTcp.clearAttendanceLog(),
@@ -207,6 +265,13 @@ class ZKLib {
         )
     }
 
+    /**
+     * Send an arbitrary ZK protocol command. Use this for opcodes not covered
+     * by a first-class method. Opcode reference:
+     * https://github.com/adrobinoga/zk-protocol/blob/master/protocol.md
+     * @param {number} command  Numeric opcode (see COMMANDS in constants.js).
+     * @param {Buffer|string} [data] Optional payload.
+     */
     async executeCmd(command, data=''){
         return await this.functionWrapper(
             ()=> this.zklibTcp.executeCmd(command, data),

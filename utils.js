@@ -1,4 +1,15 @@
-const { USHRT_MAX , COMMANDS } = require('./constants')
+/**
+ * Protocol primitives for node-zklib.
+ *
+ * Contains: checksum, header (de)serialization for both TCP and UDP framings,
+ * comm-key derivation (makeCommKey), and the fixed-width record decoders
+ * (decodeUserData*, decodeRecordData*, decodeRecordRealTimeLog*) that parse
+ * the device's binary reply payloads.
+ *
+ * Wire-format reference:
+ *   https://github.com/adrobinoga/zk-protocol/blob/master/protocol.md
+ */
+const { USHRT_MAX, COMMANDS, PROTOCOL, AUTH } = require('./constants')
 const { log } = require('./helpers/errorLog')
 
 
@@ -84,7 +95,12 @@ module.exports.createTCPHeader = (command , sessionId, replyId, data)=>{
     buf.writeUInt16LE(replyId, 6);
     
   
-    const prefixBuf = Buffer.from([0x50, 0x50, 0x82, 0x7d, 0x13, 0x00, 0x00, 0x00])
+    // Frame: <magic 4B> <0x13 fixed byte> <reserved 1B> <payloadLen 2B LE>
+    // The 0x13 byte is a fixed protocol constant required by the device.
+    const prefixBuf = Buffer.concat([
+        PROTOCOL.TCP_MAGIC_PREFIX,
+        Buffer.from([0x13, 0x00, 0x00, 0x00]),
+    ])
   
     prefixBuf.writeUInt16LE(buf.length, 4)
   
@@ -92,15 +108,16 @@ module.exports.createTCPHeader = (command , sessionId, replyId, data)=>{
 }
 
 const removeTcpHeader  = (buf)=>{
-  if (buf.length < 8) {
+  if (buf.length < PROTOCOL.TCP_PREFIX_LEN) {
       return buf;
     }
-  
-    if (buf.compare(Buffer.from([0x50, 0x50, 0x82, 0x7d]), 0, 4, 0, 4) !== 0) {
+
+    // If the magic prefix isn't present, the buffer wasn't TCP-framed — leave it alone.
+    if (buf.compare(PROTOCOL.TCP_MAGIC_PREFIX, 0, 4, 0, 4) !== 0) {
       return buf;
     }
-  
-    return buf.slice(8);
+
+    return buf.slice(PROTOCOL.TCP_PREFIX_LEN);
 }
 
 module.exports.removeTcpHeader = removeTcpHeader
@@ -187,15 +204,21 @@ module.exports.decodeRecordRealTimeLog52 =(recordData)=>{
 
 }
 
-module.exports.decodeUDPHeader = (header)=> {
-    const commandId = header.readUIntLE(0,2)
-    const checkSum = header.readUIntLE(2,2)
-    const sessionId = header.readUIntLE(4,2)
-    const replyId = header.readUIntLE(6,2)
-    return { commandId , checkSum , sessionId , replyId }
+// Header layout (8 bytes, little-endian):
+//   0..1  commandId
+//   2..3  checksum
+//   4..5  sessionId
+//   6..7  replyId
+const decodeUDPHeader = (header) => {
+    const commandId = header.readUIntLE(0, 2)
+    const checkSum = header.readUIntLE(2, 2)
+    const sessionId = header.readUIntLE(4, 2)
+    const replyId = header.readUIntLE(6, 2)
+    return { commandId, checkSum, sessionId, replyId }
 }
+module.exports.decodeUDPHeader = decodeUDPHeader
 module.exports.decodeTCPHeader = (header) => {
-    const recvData = header.subarray(8)
+    const recvData = header.subarray(PROTOCOL.TCP_PREFIX_LEN)
     const payloadSize = header.readUIntLE(4,2)
 
     const commandId = recvData.readUIntLE(0,2)
@@ -218,24 +241,30 @@ module.exports.exportErrorMessage = (commandValue)=>{
     return 'AN UNKNOWN ERROR'
 }
 
-module.exports.checkNotEventTCP = (data)=> {
-  try{
+// True when the packet is an unsolicited real-time attendance event.
+// Mirror of isEventPacketUDP but on TCP frames; checks both the command and
+// the event flag because TCP frames carry a wider envelope.
+module.exports.isEventPacketTCP = (data) => {
+  try {
     data = removeTcpHeader(data)
-    const commandId = data.readUIntLE(0,2)
-    const event = data.readUIntLE(4,2)
+    const commandId = data.readUIntLE(0, 2)
+    const event = data.readUIntLE(4, 2)
     return event === COMMANDS.EF_ATTLOG && commandId === COMMANDS.CMD_REG_EVENT
-  }catch(err){
-    log(`[228] : ${err.toString()} ,${data.toString('hex')} `)
-    return false 
+  } catch (err) {
+    log(`[isEventPacketTCP] ${err.toString()} ${data.toString('hex')}`)
+    return false
   }
 }
 
-module.exports.checkNotEventUDP = (data)=>{
-  const commandId = this.decodeUDPHeader(data.subarray(0,8)).commandId
+// True when the packet is an unsolicited real-time event (CMD_REG_EVENT) rather
+// than a reply to our last request. Used to skip event packets while waiting on
+// a data reply — they would otherwise be parsed as part of the data stream.
+module.exports.isEventPacketUDP = (data) => {
+  const commandId = decodeUDPHeader(data.subarray(0, PROTOCOL.ZK_HEADER_LEN)).commandId
   return commandId === COMMANDS.CMD_REG_EVENT
 }
 
-module.exports.makeCommKey = (key, sessionId, ticks = 50) => {
+module.exports.makeCommKey = (key, sessionId, ticks = AUTH.COMM_KEY_TICKS) => {
   // Ensure key and sessionId are integers
   key = Math.floor(key);
   sessionId = Math.floor(sessionId);
@@ -261,7 +290,7 @@ module.exports.makeCommKey = (key, sessionId, ticks = 50) => {
   let bytes = new Uint8Array(buffer);
 
   // XOR with 'ZKSO'
-  const xorKey = ["Z", "K", "S", "O"].map(c => c.charCodeAt(0));
+  const xorKey = AUTH.COMM_KEY_XOR.map(c => c.charCodeAt(0));
   bytes = bytes.map((b, i) => b ^ xorKey[i]);
 
   // Swap 16-bit pairs

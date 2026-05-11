@@ -24,7 +24,5 @@
     "url": "https://github.com/caobo171/node-zklib/issues"
   },
   "homepage": "https://github.com/caobo171/node-zklib#readme",
-  "dependencies": {
-    "node-zklib": "^1.0.0"
-  }
+  "dependencies": {}
 }

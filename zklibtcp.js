@@ -37,7 +37,7 @@ const { ZKError } = require('./zkerror');
 class ZKLibTCP {
   is_connect = false;
 
-  constructor(ip, port = 4370, timeout = 10000, comm_code = undefined, encoding = 'UTF-8') {
+  constructor(ip, port = 4370, timeout = 10000, comm_code = undefined, encoding = 'UTF-8', maxChunk = MAX_CHUNK) {
     this.ip = ip
     this.port = port
     this.timeout = timeout
@@ -46,6 +46,10 @@ class ZKLibTCP {
     this.socket = null
     this.comm_code = comm_code
     this.encoding = encoding
+    // Size in bytes each bulk download is sliced into. A smaller value makes
+    // each chunk request individually more robust over slow/high-latency links
+    // where large chunks stall partway through the download.
+    this.maxChunk = maxChunk || MAX_CHUNK
   }
 
 
@@ -296,8 +300,9 @@ class ZKLibTCP {
 
           // We need to split the data to many chunks to receive , because it's to large
           // After receiving all chunk data , we concat it to TotalBuffer variable , that 's the data we want
-          let remain = size % MAX_CHUNK
-          let numberChunks = Math.round(size - remain) / MAX_CHUNK
+          const maxChunk = this.maxChunk || MAX_CHUNK
+          let remain = size % maxChunk
+          let numberChunks = Math.round(size - remain) / maxChunk
           let totalPackets = numberChunks + (remain > 0 ? 1 : 0)
           let replyData = Buffer.from([])
 
@@ -306,7 +311,9 @@ class ZKLibTCP {
           let realTotalBuffer = Buffer.from([])
 
 
-          const timeout = TIMEOUTS.CHUNK_TCP
+          // Respect the configured timeout instead of a fixed value, so
+          // slow/high-latency links can allow more time between packets.
+          const timeout = this.timeout || TIMEOUTS.CHUNK_TCP
           let timer = setTimeout(() => {
             internalCallback(replyData, new Error('TIMEOUT WHEN RECEIVING PACKET'))
           }, timeout)
@@ -339,7 +346,7 @@ class ZKLibTCP {
               ])
               totalBuffer = totalBuffer.subarray(PROTOCOL.TCP_PREFIX_LEN + packetLength)
 
-              if ((totalPackets > 1 && realTotalBuffer.length === MAX_CHUNK + PROTOCOL.ZK_HEADER_LEN)
+              if ((totalPackets > 1 && realTotalBuffer.length === maxChunk + PROTOCOL.ZK_HEADER_LEN)
                 || (totalPackets === 1 && realTotalBuffer.length === remain + PROTOCOL.ZK_HEADER_LEN)) {
 
                 replyData = Buffer.concat([replyData, realTotalBuffer.subarray(PROTOCOL.ZK_HEADER_LEN)])
@@ -351,9 +358,29 @@ class ZKLibTCP {
 
                 if (totalPackets <= 0) {
                   internalCallback(replyData)
+                } else {
+                  // This chunk is complete — request the next one.
+                  requestNextChunk()
                 }
               }
             }
+          }
+
+          // Request chunks sequentially: ask for one chunk, wait for it to fully
+          // arrive, then ask for the next. Firing every chunk request up front
+          // works on a LAN but stalls over a slow/high-latency (WAN) link after a
+          // couple of chunks — the device's send buffer fills faster than the link
+          // drains it and the remaining chunks never arrive, truncating the
+          // download. Keeping one chunk in flight lets the slow link keep up.
+          let nextChunk = 0
+          const requestNextChunk = () => {
+            if (nextChunk > numberChunks) return
+            if (nextChunk === numberChunks) {
+              this.sendChunkRequest(numberChunks * maxChunk, remain)
+            } else {
+              this.sendChunkRequest(nextChunk * maxChunk, maxChunk)
+            }
+            nextChunk++
           }
 
           this.socket.once('close', () => {
@@ -362,13 +389,7 @@ class ZKLibTCP {
 
           this.socket.on('data', handleOnData);
 
-          for (let i = 0; i <= numberChunks; i++) {
-            if (i === numberChunks) {
-              this.sendChunkRequest(numberChunks * MAX_CHUNK, remain)
-            } else {
-              this.sendChunkRequest(i * MAX_CHUNK, MAX_CHUNK)
-            }
-          }
+          requestNextChunk()
 
           break;
         }

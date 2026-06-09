@@ -23,11 +23,14 @@ class ZKLib {
      * @param {number} [comm_code] Device communication password (0 = disabled).
      * @param {string} [protocol]  'tcp' | 'udp'. Omit to auto-detect (TCP, then UDP).
      */
-    constructor(ip, port, timeout, inport, comm_code = 0, protocol = null) {
+    constructor(ip, port, timeout, inport, comm_code = 0, protocol = null, maxChunk) {
         // null until createSocket() succeeds; functionWrapper rejects calls before then.
         this.connectionType = protocol
 
-        this.zklibTcp = new ZKLibTCP(ip, port, timeout, comm_code)
+        // maxChunk (optional) — size in bytes each bulk download is sliced into.
+        // Defaults to MAX_CHUNK. Lower it (e.g. 8184) for slow/high-latency/WAN
+        // links where the device stalls partway through a large download.
+        this.zklibTcp = new ZKLibTCP(ip, port, timeout, comm_code, undefined, maxChunk)
         this.zklibUdp = new ZKLibUDP(ip, port, timeout, inport, comm_code)
         this.interval = null
         this.timer = null

@@ -169,6 +169,7 @@ module.exports.decodeRecordData40 = (recordData)=>{
         .split('\0')
         .shift(),
         recordTime: parseTimeToDate(recordData.readUInt32LE(27)),
+        type: recordData.readUIntLE(31, 1),
       }
       return record
 }
